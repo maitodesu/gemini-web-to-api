@@ -53,6 +53,10 @@ type OpenAIConfig struct {
 
 type ServerConfig struct {
 	Port string
+	// Host is the interface to listen on. Empty means all interfaces (the
+	// default, needed in Docker); "127.0.0.1" keeps the API reachable only
+	// from the same machine, e.g. behind an authenticating proxy.
+	Host string
 }
 
 const (
@@ -77,6 +81,7 @@ func New() (*Config, error) {
 
 	// Server
 	cfg.Server.Port = getEnv("PORT", defaultServerPort)
+	cfg.Server.Host = strings.TrimSpace(os.Getenv("LISTEN_HOST"))
 
 	// General
 	cfg.LogLevel = getEnv("LOG_LEVEL", defaultLogLevel)

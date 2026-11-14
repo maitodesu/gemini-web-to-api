@@ -253,3 +253,97 @@ func TestChatCompletionsReturnBadGatewayForInvalidToolCall(t *testing.T) {
 		t.Errorf("error body does not say what was wrong: %s", body)
 	}
 }
+
+// Real failures seen from Gemini with the pi coding agent (tool_choice auto):
+// a tool call missing one closing brace, and a call copied in the transcript
+// "[Call Tool: ...]" form. Both used to reach the client as plain text, which
+// ended the agent's turn.
+func TestToolBridgeRecoversMalformedAgentReplies(t *testing.T) {
+	service := &OpenAIService{log: zap.NewNop()}
+	req := doneToolRequest(t, `"auto"`)
+
+	tests := []struct {
+		name  string
+		reply string
+	}{
+		{
+			name:  "missing closing brace of arguments",
+			reply: `{"tool_calls":[{"name":"done","arguments":{"answer":"Done.","document":{"title":"Test","body":"# Hello\n\nSome markdown body."}}]}`,
+		},
+		{
+			name:  "transcript form with ID",
+			reply: `[Call Tool: done with ID call_1794684755123456789_0 and Input: ` + wantDoneArguments + `]`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls, _, err := service.parseToolBridgeOutput(req, tt.reply)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(calls) != 1 || calls[0].Function.Name != "done" || calls[0].Function.Arguments != wantDoneArguments {
+				t.Fatalf("got %+v", calls)
+			}
+		})
+	}
+}
+
+func TestCreateChatCompletionAutoRetriesBrokenToolCallInsteadOfStopping(t *testing.T) {
+	fake := &fakeGemini{replies: []string{
+		`{"tool_calls":[{"name":"done","arguments":{"answer":"Done.", "document": [unrecoverable`,
+		`{"tool_calls":[{"name":"done","arguments":` + wantDoneArguments + `}]}`,
+	}}
+	service := newToolBridgeTestService(t, fake)
+
+	resp, err := service.CreateChatCompletion(context.Background(), doneToolRequest(t, `"auto"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.prompts) != 2 {
+		t.Fatalf("Gemini was called %d times, want 2", len(fake.prompts))
+	}
+	choice := resp.Choices[0]
+	if choice.FinishReason != "tool_calls" || len(choice.Message.ToolCalls) != 1 {
+		t.Fatalf("got finish_reason=%q content=%v tool_calls=%v", choice.FinishReason, choice.Message.Content, choice.Message.ToolCalls)
+	}
+}
+
+func TestToolBridgePromptSaysThereIsNoToolLimit(t *testing.T) {
+	service := &OpenAIService{log: zap.NewNop()}
+	prompt := service.buildToolBridgePrompt(doneToolRequest(t, `"auto"`), "user: hi")
+	for _, want := range []string{"NO limit on how many tool calls", "not a count against any budget", "never as Markdown links"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("bridge prompt is missing %q", want)
+		}
+	}
+}
+
+func TestCreateChatCompletionRetriesDeferral(t *testing.T) {
+	deferral := `{"content":"I don't have any tool calls remaining in this turn, so send a quick reply (e.g., \"create them\") and I'll write them right away!"}`
+	t.Run("then calls a tool", func(t *testing.T) {
+		fake := &fakeGemini{replies: []string{deferral, `{"tool_calls":[{"name":"done","arguments":` + wantDoneArguments + `}]}`}}
+		resp, err := newToolBridgeTestService(t, fake).CreateChatCompletion(context.Background(), doneToolRequest(t, `"auto"`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(fake.prompts) != 2 || !strings.Contains(fake.prompts[1], "handed the task back") {
+			t.Fatalf("Gemini was called %d times, want 2 with the deferral note", len(fake.prompts))
+		}
+		if choice := resp.Choices[0]; choice.FinishReason != "tool_calls" {
+			t.Fatalf("finish_reason = %q, want tool_calls", choice.FinishReason)
+		}
+	})
+	t.Run("keeps deferring", func(t *testing.T) {
+		fake := &fakeGemini{replies: []string{deferral}}
+		resp, err := newToolBridgeTestService(t, fake).CreateChatCompletion(context.Background(), doneToolRequest(t, `"auto"`))
+		if err != nil {
+			t.Fatalf("a persistent deferral must come back as text, got %v", err)
+		}
+		if len(fake.prompts) != maxToolBridgeAttempts {
+			t.Errorf("Gemini was called %d times, want %d", len(fake.prompts), maxToolBridgeAttempts)
+		}
+		if resp.Choices[0].FinishReason != "stop" {
+			t.Errorf("finish_reason = %q, want stop", resp.Choices[0].FinishReason)
+		}
+	})
+}

@@ -82,3 +82,24 @@ func TestClaudeSSEChunkFormat(t *testing.T) {
 		t.Errorf("expected trailing double newline, got: %q", result)
 	}
 }
+
+func TestParseToolBridgeOutputRecoversMalformedReplies(t *testing.T) {
+	service := &ClaudeService{log: zap.NewNop()}
+	req := dto.MessageRequest{}
+
+	t.Run("missing closing brace", func(t *testing.T) {
+		input := `{"status":"tool_use","tool_calls":[{"name":"bash","input":{"command":"ls -la"}]}`
+		uses, _ := service.parseToolBridgeOutput(req, input)
+		if len(uses) != 1 || uses[0].Name != "bash" {
+			t.Fatalf("got %+v", uses)
+		}
+	})
+
+	t.Run("transcript form", func(t *testing.T) {
+		input := `[Call Tool: bash with ID toolu_1 and Input: {"command":"ls -la"}]`
+		uses, content := service.parseToolBridgeOutput(req, input)
+		if len(uses) != 1 || uses[0].Name != "bash" || content != "" {
+			t.Fatalf("got uses=%+v content=%q", uses, content)
+		}
+	})
+}

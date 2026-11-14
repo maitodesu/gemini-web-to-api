@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gemini-web-to-api/internal/commons/configs"
@@ -734,8 +735,23 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 
 		httpStart := time.Now()
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", generateURL, strings.NewReader(formBody))
+		// Each attempt gets its own context so a stalled reply (Gemini Web
+		// occasionally stops sending without closing the stream) is cancelled
+		// and retried instead of consuming the caller's whole deadline.
+		attemptCtx, cancelAttempt := context.WithCancel(ctx)
+		var stalled atomic.Bool
+		stallTimer := time.AfterFunc(generateStallTimeout, func() {
+			stalled.Store(true)
+			cancelAttempt()
+		})
+		endAttempt := func() {
+			stallTimer.Stop()
+			cancelAttempt()
+		}
+
+		httpReq, err := http.NewRequestWithContext(attemptCtx, "POST", generateURL, strings.NewReader(formBody))
 		if err != nil {
+			endAttempt()
 			lastErr = fmt.Errorf("failed to build generate request: %w", err)
 			continue
 		}
@@ -754,6 +770,10 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 		httpResp, err := plainClient.Do(httpReq)
 		httpDuration := time.Since(httpStart)
 		if err != nil {
+			endAttempt()
+			if stalled.Load() {
+				err = fmt.Errorf("Gemini sent no response for %s: %w", generateStallTimeout, errGenerateStalled)
+			}
 			c.log.Warn("Generate request failed, will retry",
 				zap.Error(err),
 				zap.Duration("http_duration", httpDuration),
@@ -765,6 +785,7 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 		if httpResp.StatusCode != http.StatusOK {
 			bodySnippet, _ := io.ReadAll(io.LimitReader(httpResp.Body, 512))
 			_ = httpResp.Body.Close()
+			endAttempt()
 			lastErr = fmt.Errorf("generate failed with status: %d", httpResp.StatusCode)
 			c.log.Warn("Generate returned non-200",
 				zap.Int("status", httpResp.StatusCode),
@@ -777,9 +798,14 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 			return nil, lastErr
 		}
 
-		respBytes, err := io.ReadAll(httpResp.Body)
+		respBytes, err := io.ReadAll(&stallResetReader{r: httpResp.Body, timer: stallTimer, d: generateStallTimeout})
 		_ = httpResp.Body.Close()
+		endAttempt()
 		if err != nil {
+			if stalled.Load() {
+				err = fmt.Errorf("Gemini stopped sending for %s after %d bytes: %w", generateStallTimeout, len(respBytes), errGenerateStalled)
+				c.log.Warn("Gemini reply stalled, retrying", zap.Error(err), zap.Int("attempt", attempt))
+			}
 			lastErr = fmt.Errorf("failed to read generate response: %w", err)
 			continue
 		}

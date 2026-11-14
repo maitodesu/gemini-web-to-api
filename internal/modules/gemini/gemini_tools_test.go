@@ -141,3 +141,20 @@ func TestGenerateContentAppliesToolConfig(t *testing.T) {
 		}
 	})
 }
+
+func TestParseToolBridgeOutputRecoversMalformedReplies(t *testing.T) {
+	req := decodeGenerateRequest(t, `{"contents":[{"role":"user","parts":[{"text":"weather?"}]}],`+weatherTools+`}`)
+	service := &GeminiService{log: zap.NewNop()}
+
+	for name, reply := range map[string]string{
+		"missing closing brace": `{"status":"call","tool_calls":[{"name":"get_weather","arguments":{"city":"Tokyo"}]}`,
+		"transcript form":       `[Call Tool: get_weather with Input: {"city":"Tokyo"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls, content := service.parseToolBridgeOutput(req, reply)
+			if len(calls) != 1 || calls[0].Name != "get_weather" || content != "" {
+				t.Fatalf("got calls=%+v content=%q", calls, content)
+			}
+		})
+	}
+}

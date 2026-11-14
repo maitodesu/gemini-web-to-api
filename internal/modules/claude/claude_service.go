@@ -86,6 +86,15 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 
 	if hasTools {
 		toolUses, text := s.parseToolBridgeOutput(req, response.Text)
+		if len(toolUses) == 0 && common.LooksLikeDeferral(text) {
+			// Gemini handed the task back instead of calling a tool; ask once more.
+			s.log.Warn("Gemini deferred the task instead of calling a tool; asking again")
+			if retry, rerr := s.client.GenerateContent(ctx, prompt+common.DeferralRetryNote, opts...); rerr == nil {
+				if uses, t := s.parseToolBridgeOutput(req, retry.Text); len(uses) > 0 {
+					response, toolUses, text = retry, uses, t
+				}
+			}
+		}
 		if len(toolUses) > 0 {
 			for _, tu := range toolUses {
 				resContent = append(resContent, tu)
@@ -253,6 +262,7 @@ func (s *ClaudeService) buildToolBridgePrompt(req dto.MessageRequest, basePrompt
 	b.WriteString("Output schema:\n")
 	b.WriteString("{\"status\":\"tool_use\",\"tool_calls\":[{\"id\":\"<unique_id>\",\"name\":\"<tool_name>\",\"input\":{}}]} OR {\"status\":\"text\",\"content\":\"<assistant_text>\"}\n")
 	b.WriteString("Rules:\n")
+	b.WriteString(common.ToolBridgeAgentRules)
 	b.WriteString("- Use only tool names listed below.\n")
 	b.WriteString("- input must be valid JSON object.\n")
 
@@ -277,6 +287,7 @@ func (s *ClaudeService) buildToolBridgePrompt(req dto.MessageRequest, basePrompt
 }
 
 func (s *ClaudeService) parseToolBridgeOutput(req dto.MessageRequest, text string) ([]dto.ConfigContent, string) {
+	text = common.CleanToolBridgeReply(text)
 	cleaned := common.StripCodeFence(text)
 	if cleaned == "" {
 		return nil, ""
@@ -295,11 +306,27 @@ func (s *ClaudeService) parseToolBridgeOutput(req dto.MessageRequest, text strin
 	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
 		obj := common.ExtractFirstJSONObject(text)
 		if obj == "" || json.Unmarshal([]byte(obj), &payload) != nil {
-			return nil, text
+			// Small JSON slips (e.g. a missing closing brace) in a long reply.
+			repaired := common.RepairJSONObject(text)
+			if repaired == "" || json.Unmarshal([]byte(repaired), &payload) != nil {
+				// Tool calls copied in the "[Call Tool: ...]" transcript form.
+				if uses := claudeUsesFromTextCalls(common.ParseTextToolCalls(text)); len(uses) > 0 {
+					return uses, ""
+				}
+				return nil, text
+			}
 		}
 	}
 
-	if payload.Status == "tool_use" && len(payload.ToolCalls) > 0 {
+	// A "[Call Tool: name ... Input: {...}]" line decodes above as just its
+	// input object (no tool_calls, no content); read it as the call it is.
+	if len(payload.ToolCalls) == 0 && payload.Content == "" {
+		if uses := claudeUsesFromTextCalls(common.ParseTextToolCalls(text)); len(uses) > 0 {
+			return uses, ""
+		}
+	}
+
+	if len(payload.ToolCalls) > 0 && (payload.Status == "tool_use" || payload.Status == "") {
 		uses := make([]dto.ConfigContent, 0, len(payload.ToolCalls))
 		for _, tc := range payload.ToolCalls {
 			id := tc.ID
@@ -317,4 +344,22 @@ func (s *ClaudeService) parseToolBridgeOutput(req dto.MessageRequest, text strin
 	}
 
 	return nil, payload.Content
+}
+
+// claudeUsesFromTextCalls turns "[Call Tool: ...]" text calls into tool_use blocks.
+func claudeUsesFromTextCalls(calls []common.TextToolCall) []dto.ConfigContent {
+	uses := make([]dto.ConfigContent, 0, len(calls))
+	for _, tc := range calls {
+		var input map[string]interface{}
+		if json.Unmarshal([]byte(tc.Arguments), &input) != nil {
+			continue
+		}
+		uses = append(uses, dto.ConfigContent{
+			Type:  "tool_use",
+			ID:    fmt.Sprintf("toolu_%s", uuid.New().String()),
+			Name:  tc.Name,
+			Input: input,
+		})
+	}
+	return uses
 }

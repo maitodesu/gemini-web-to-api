@@ -623,10 +623,21 @@ func (s *OpenAIService) generateToolBridge(ctx context.Context, req dto.ChatComp
 		if err == nil && mustCall && len(calls) == 0 {
 			err = errors.New("the reply contained no tool call")
 		}
-		if err == nil {
+		// A text reply that hands the task back ("no tool calls remaining, reply
+		// 'go' and I'll ...") would end the client's agent loop. Ask again; on
+		// the last attempt the text is returned as is rather than failing.
+		deferred := err == nil && len(calls) == 0 && attempt < maxToolBridgeAttempts &&
+			req.ToolChoiceMode() != "none" && utils.LooksLikeDeferral(content)
+		if err == nil && !deferred {
 			return response, calls, content, nil
 		}
 
+		if deferred {
+			s.log.Warn("Gemini deferred the task instead of calling a tool; asking again",
+				zap.Int("attempt", attempt), zap.String("model", req.Model))
+			attemptPrompt = prompt + utils.DeferralRetryNote
+			continue
+		}
 		lastErr = err
 		s.log.Warn("Gemini returned an unusable tool call",
 			zap.Int("attempt", attempt), zap.Int("max_attempts", maxToolBridgeAttempts),
@@ -652,6 +663,7 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 		b.WriteString("{\"content\":\"<assistant_text>\"}\n")
 	}
 	b.WriteString("Rules:\n")
+	b.WriteString(utils.ToolBridgeAgentRules)
 	b.WriteString("- Use only tool names listed below.\n")
 	b.WriteString("- arguments must be a JSON object that sets every required parameter of the tool's parameters schema.\n")
 	b.WriteString("- Escape newlines and double quotes inside JSON strings as \\n and \\\".\n")
@@ -709,6 +721,7 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 // the model tried to call a tool but the call cannot be used (unknown tool,
 // malformed or incomplete arguments), so it must not reach the client.
 func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, text string) ([]dto.ChatCompletionToolCall, string, error) {
+	text = utils.CleanToolBridgeReply(text)
 	cleaned := utils.StripCodeFence(text)
 	if cleaned == "" {
 		return nil, "", nil
@@ -716,6 +729,12 @@ func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, tex
 
 	payload, ok := decodeToolBridgePayload(cleaned)
 	if !ok {
+		if utils.LooksLikeToolCallAttempt(text) {
+			// The model meant to call a tool but the reply is not usable bridge
+			// JSON. Returning it as text would end the client's agent turn, so
+			// ask for it again instead.
+			return nil, "", errors.New("the reply looked like a tool call but was not valid JSON in the required format")
+		}
 		return nil, strings.TrimSpace(text), nil
 	}
 
@@ -791,6 +810,23 @@ func decodeToolBridgePayload(text string) (toolBridgePayload, bool) {
 			break
 		}
 		start += next + 1
+	}
+
+	// Small JSON slips, such as a missing closing brace, in a long tool call.
+	if repaired := utils.RepairJSONObject(text); repaired != "" {
+		if payload, ok := unmarshalToolBridgePayload(repaired); ok {
+			return payload, true
+		}
+	}
+
+	// Tool calls written in the `[Call Tool: ...]` transcript form the bridge
+	// uses for earlier calls in the conversation.
+	if textCalls := utils.ParseTextToolCalls(text); len(textCalls) > 0 {
+		payload := toolBridgePayload{ToolCalls: make([]toolBridgeCall, 0, len(textCalls))}
+		for _, tc := range textCalls {
+			payload.ToolCalls = append(payload.ToolCalls, toolBridgeCall{Name: tc.Name, Arguments: json.RawMessage(tc.Arguments)})
+		}
+		return payload, true
 	}
 	return toolBridgePayload{}, false
 }

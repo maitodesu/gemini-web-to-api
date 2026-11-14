@@ -68,6 +68,15 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 
 	if req.HasToolsEnabled() {
 		functionCalls, content := s.parseToolBridgeOutput(req, response.Text)
+		if len(functionCalls) == 0 && utils.LooksLikeDeferral(content) {
+			// Gemini handed the task back instead of calling a tool; ask once more.
+			s.log.Warn("Gemini deferred the task instead of calling a tool; asking again")
+			if retry, rerr := s.generate(ctx, prompt+utils.DeferralRetryNote, opts...); rerr == nil {
+				if calls, c := s.parseToolBridgeOutput(req, retry.Text); len(calls) > 0 {
+					response, functionCalls, content = retry, calls, c
+				}
+			}
+		}
 		if len(functionCalls) > 0 {
 			for _, fc := range functionCalls {
 				resParts = append(resParts, dto.Part{FunctionCall: &fc})
@@ -309,6 +318,7 @@ func (s *GeminiService) buildToolBridgePrompt(req dto.GeminiGenerateRequest, bas
 	b.WriteString("Output schema:\n")
 	b.WriteString("{\"status\":\"call\",\"tool_calls\":[{\"name\":\"<tool_name>\",\"arguments\":{}}]} OR {\"status\":\"text\",\"content\":\"<assistant_text>\"}\n")
 	b.WriteString("Rules:\n")
+	b.WriteString(utils.ToolBridgeAgentRules)
 	b.WriteString("- Use only tool names listed below.\n")
 	b.WriteString("- arguments must be valid JSON object.\n")
 	if req.FunctionCallingMode() == "ANY" {
@@ -341,6 +351,7 @@ func (s *GeminiService) buildToolBridgePrompt(req dto.GeminiGenerateRequest, bas
 }
 
 func (s *GeminiService) parseToolBridgeOutput(req dto.GeminiGenerateRequest, text string) ([]dto.FunctionCall, string) {
+	text = utils.CleanToolBridgeReply(text)
 	cleaned := utils.StripCodeFence(text)
 	if cleaned == "" {
 		return nil, ""
@@ -355,11 +366,33 @@ func (s *GeminiService) parseToolBridgeOutput(req dto.GeminiGenerateRequest, tex
 	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
 		obj := utils.ExtractFirstJSONObject(text)
 		if obj == "" || json.Unmarshal([]byte(obj), &payload) != nil {
-			return nil, text
+			// Small JSON slips (e.g. a missing closing brace) in a long reply.
+			repaired := utils.RepairJSONObject(text)
+			if repaired == "" || json.Unmarshal([]byte(repaired), &payload) != nil {
+				// Tool calls copied in the "[Call Tool: ...]" transcript form.
+				textCalls := utils.ParseTextToolCalls(text)
+				if len(textCalls) == 0 {
+					return nil, text
+				}
+				payload.Status = "call"
+				payload.ToolCalls = payload.ToolCalls[:0]
+				for _, tc := range textCalls {
+					payload.ToolCalls = append(payload.ToolCalls, toolBridgeCall{Name: tc.Name, Arguments: json.RawMessage(tc.Arguments)})
+				}
+			}
 		}
 	}
 
-	if payload.Status == "call" && len(payload.ToolCalls) > 0 {
+	// A "[Call Tool: name ... Input: {...}]" line decodes above as just its
+	// input object (no tool_calls, no content); read it as the call it is.
+	if len(payload.ToolCalls) == 0 && payload.Content == "" {
+		for _, tc := range utils.ParseTextToolCalls(text) {
+			payload.Status = "call"
+			payload.ToolCalls = append(payload.ToolCalls, toolBridgeCall{Name: tc.Name, Arguments: json.RawMessage(tc.Arguments)})
+		}
+	}
+
+	if len(payload.ToolCalls) > 0 && (payload.Status == "call" || payload.Status == "") {
 		calls := make([]dto.FunctionCall, 0, len(payload.ToolCalls))
 		for _, tc := range payload.ToolCalls {
 			// Only declared tools that tool_config allows reach the client.

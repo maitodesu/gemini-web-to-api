@@ -73,3 +73,17 @@ func TestNewDerivesAuthenticationFromGeminiCookies(t *testing.T) {
 		t.Fatalf("incorrect Gemini config derived from full Cookie header: %#v", cfg.Gemini)
 	}
 }
+
+func TestNewListenHost(t *testing.T) {
+	t.Setenv("GEMINI_COOKIES", "__Secure-1PSID=psid; __Secure-1PSIDTS=psidts")
+	for value, want := range map[string]string{"": "", "127.0.0.1": "127.0.0.1", "  0.0.0.0 ": "0.0.0.0"} {
+		t.Setenv("LISTEN_HOST", value)
+		cfg, err := New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Server.Host != want {
+			t.Errorf("LISTEN_HOST=%q: Host = %q, want %q", value, cfg.Server.Host, want)
+		}
+	}
+}

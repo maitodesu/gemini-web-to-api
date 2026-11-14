@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"gemini-web-to-api/internal/commons/configs"
@@ -68,8 +69,9 @@ func Register404Handler(app *fiber.App) {
 
 // RegisterFiberLifecycle registers the Fiber app lifecycle hooks
 func RegisterFiberLifecycle(lc fx.Lifecycle, app *fiber.App, cfg *configs.Config, log *zap.Logger) {
-	port := cfg.Server.Port
-	address := fmt.Sprintf(":%s", port)
+	// Empty host listens on all interfaces; LISTEN_HOST=127.0.0.1 keeps the
+	// API local to the machine (e.g. when an authenticating proxy fronts it).
+	address := net.JoinHostPort(cfg.Server.Host, cfg.Server.Port)
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
