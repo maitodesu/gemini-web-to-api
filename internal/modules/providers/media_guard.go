@@ -40,6 +40,9 @@ var mediaAckPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(i'?m|i am|i'?ll|i will|i'?ve started|now|currently)\s+(generat(e|ing)|creat(e|ing)|mak(e|ing)|produc(e|ing)|render(ing)?|compos(e|ing))\b[^.\n]{0,40}\b(video|videos|music|song|track|clip)\b`),
 	regexp.MustCompile(`(?i)\b(generating|rendering)\s+(your|a|the|this)\s+(video|music|song|track|clip)\b`),
 	regexp.MustCompile(`(?i)\b(your|the)\s+(video|song|track|clip)\s+(is|will be)\s+(being generated|being created|ready (soon|shortly|in)|on (its|the) way)`),
+	// The tool's quota notice: "I can create more videos as soon as your
+	// limit resets."
+	regexp.MustCompile(`(?i)\b(creat|generat|mak)\w*\s+(more\s+)?(videos?|music|songs?|tracks?)\b[^.\n]{0,60}\b(limit|quota)\b`),
 }
 
 // mediaAckMaxLen bounds the replies checked for an acknowledgement: Gemini's

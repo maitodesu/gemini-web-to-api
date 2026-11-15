@@ -19,6 +19,8 @@ func TestStartedMediaGeneration(t *testing.T) {
 		{"video ack 2", &Response{Text: "Generating your video now..."}, true},
 		{"music ack", &Response{Text: "I'll create a track for you with an upbeat feel."}, true},
 		{"ready soon", &Response{Text: "Sure! Your video will be ready in a few minutes."}, true},
+		{"quota notice", &Response{Text: "I can create more videos as soon as your limit resets. Check your usage in Settings."}, true},
+		{"limit discussion", &Response{Text: "YouTube has an upload limit for new accounts."}, false},
 		{"plain answer", &Response{Text: "The capital of France is Paris."}, false},
 		{"mentions video", &Response{Text: "You can watch the music video on YouTube."}, false},
 		{"how-to", &Response{Text: "To make a video in DaVinci Resolve, import your clips first."}, false},
