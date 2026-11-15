@@ -313,6 +313,10 @@ func (s *ClaudeService) parseToolBridgeOutput(req dto.MessageRequest, text strin
 				if uses := claudeUsesFromTextCalls(common.ParseTextToolCalls(text)); len(uses) > 0 {
 					return uses, ""
 				}
+				// {"content":"..."} with unescaped quotes inside.
+				if content, ok := common.LooseContentReply(cleaned); ok {
+					return nil, content
+				}
 				return nil, text
 			}
 		}

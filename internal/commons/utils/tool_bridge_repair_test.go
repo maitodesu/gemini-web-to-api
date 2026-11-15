@@ -123,3 +123,26 @@ func TestLooksLikeDeferral(t *testing.T) {
 		}
 	}
 }
+
+func TestLooseContentReply(t *testing.T) {
+	cases := map[string]string{
+		`{"content": "Continuous Actions ("-ing"):\n* Ex: 今本を読んでいます。あ 😀"}`: "Continuous Actions (\"-ing\"):\n* Ex: 今本を読んでいます。あ 😀",
+		"```json\n{\"status\":\"text\",\"content\":\"say \"hi\"\"}\n```":                         `say "hi"`,
+		`{"content":"a "b" c", "status": "text"}`:                                                 `a "b" c`,
+	}
+	for in, want := range cases {
+		got, ok := LooseContentReply(in)
+		if !ok || got != want {
+			t.Errorf("LooseContentReply(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	for _, in := range []string{
+		"plain text answer",
+		`{"tool_calls":[{"name":"x","arguments":{"q":"a "b""}}]}`,
+		`{"content": "unterminated`,
+	} {
+		if got, ok := LooseContentReply(in); ok {
+			t.Errorf("LooseContentReply(%q) = %q, want no match", in, got)
+		}
+	}
+}

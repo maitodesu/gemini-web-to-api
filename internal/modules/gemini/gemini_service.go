@@ -372,6 +372,10 @@ func (s *GeminiService) parseToolBridgeOutput(req dto.GeminiGenerateRequest, tex
 				// Tool calls copied in the "[Call Tool: ...]" transcript form.
 				textCalls := utils.ParseTextToolCalls(text)
 				if len(textCalls) == 0 {
+					// {"content":"..."} with unescaped quotes inside.
+					if content, ok := utils.LooseContentReply(cleaned); ok {
+						return nil, content
+					}
 					return nil, text
 				}
 				payload.Status = "call"

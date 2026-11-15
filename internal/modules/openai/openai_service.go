@@ -735,6 +735,11 @@ func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, tex
 			// ask for it again instead.
 			return nil, "", errors.New("the reply looked like a tool call but was not valid JSON in the required format")
 		}
+		// {"content":"..."} with unescaped quotes inside: unwrap it so the
+		// client gets the text, not raw JSON with literal \n sequences.
+		if content, ok := utils.LooseContentReply(cleaned); ok {
+			return nil, content, nil
+		}
 		return nil, strings.TrimSpace(text), nil
 	}
 

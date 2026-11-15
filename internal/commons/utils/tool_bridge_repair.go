@@ -3,7 +3,10 @@ package utils
 import (
 	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // RepairJSONObject tries to turn a slightly malformed JSON object written by a
@@ -150,6 +153,84 @@ func ParseTextToolCalls(text string) []TextToolCall {
 func LooksLikeToolCallAttempt(text string) bool {
 	t := strings.TrimSpace(StripCodeFence(text))
 	return strings.Contains(t, `"tool_calls"`) || strings.Contains(t, "[Call Tool:")
+}
+
+var (
+	looseContentStartRe = regexp.MustCompile(`^\s*\{\s*(?:"status"\s*:\s*"[A-Za-z_]*"\s*,\s*)?"content"\s*:\s*"`)
+	looseContentEndRe   = regexp.MustCompile(`"\s*(?:,\s*"status"\s*:\s*"[A-Za-z_]*"\s*)?\}\s*$`)
+)
+
+// LooseContentReply recovers the text of a {"content":"..."} bridge reply that
+// is not valid JSON. Gemini often leaves quotes inside the text unescaped
+// (`Continuous Actions ("-ing")`), so a strict decode fails and the client
+// would see the raw JSON with literal \n sequences. The string is taken
+// from the opening quote to the closing quote before the final brace, and
+// JSON escapes in it are decoded leniently. Replies with tool calls are left
+// alone: their arguments need a real decode.
+func LooseContentReply(text string) (string, bool) {
+	t := strings.TrimSpace(StripCodeFence(text))
+	if strings.Contains(t, `"tool_calls"`) {
+		return "", false
+	}
+	start := looseContentStartRe.FindStringIndex(t)
+	end := looseContentEndRe.FindStringIndex(t)
+	if start == nil || end == nil || end[0] < start[1] {
+		return "", false
+	}
+	return strings.TrimSpace(unescapeJSONLenient(t[start[1]:end[0]])), true
+}
+
+// unescapeJSONLenient decodes JSON string escapes and keeps anything else,
+// including bare quotes and unknown escapes, as written.
+func unescapeJSONLenient(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '\\' || i+1 >= len(s) {
+			b.WriteByte(c)
+			continue
+		}
+		i++
+		switch s[i] {
+		case 'n':
+			b.WriteByte('\n')
+		case 't':
+			b.WriteByte('\t')
+		case 'r':
+			b.WriteByte('\r')
+		case 'b':
+			b.WriteByte('\b')
+		case 'f':
+			b.WriteByte('\f')
+		case '"', '\\', '/':
+			b.WriteByte(s[i])
+		case 'u':
+			if i+4 < len(s) {
+				if r, err := strconv.ParseUint(s[i+1:i+5], 16, 32); err == nil {
+					ru := rune(r)
+					// Join a surrogate pair (😀) into one rune.
+					if utf16.IsSurrogate(ru) && i+10 < len(s) && s[i+5] == '\\' && s[i+6] == 'u' {
+						if r2, err := strconv.ParseUint(s[i+7:i+11], 16, 32); err == nil {
+							if joined := utf16.DecodeRune(ru, rune(r2)); joined != utf8.RuneError {
+								b.WriteRune(joined)
+								i += 10
+								continue
+							}
+						}
+					}
+					b.WriteRune(ru)
+					i += 4
+					continue
+				}
+			}
+			b.WriteString(`\u`)
+		default:
+			b.WriteByte('\\')
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }
 
 // fakeLimitPhrases are Gemini Web's claims of a tool budget, carried over from
