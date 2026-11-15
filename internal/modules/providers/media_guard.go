@@ -20,6 +20,11 @@ var ErrUnrequestedMedia = errors.New("Gemini started generating media for a text
 const TextOnlyNote = "\n\nNote: this is a text-only API. Answer in text, or in the JSON format given above if there is one. " +
 	"Do not create videos, music or images, do not use Gemini's own media tools, and never say you are generating one."
 
+// MediaUnavailableReply replaces a reply that still starts media generation
+// after TextOnlyNote.
+const MediaUnavailableReply = "I can't create videos or music through this chat API, so nothing was generated. " +
+	"Video generation is available separately through the bridge's /v1/videos endpoint."
+
 // WithTextOnly marks a request whose caller can only use text. A reply that
 // starts Gemini's video or music generation is then never returned as is.
 func WithTextOnly() GenerateOption {
@@ -83,8 +88,11 @@ func (c *Client) guardTextOnly(ctx context.Context, prompt string, resp *Respons
 		return nil, err
 	}
 	if StartedMediaGeneration(retry) {
-		c.log.Warn("Gemini started media generation again; returning an error", zap.Int("attempts", 2))
-		return nil, ErrUnrequestedMedia
+		// A reply, not an error: clients and proxies retry errors, and every
+		// retry would start another generation on the account.
+		c.log.Warn("Gemini started media generation again; replying that media is unavailable", zap.Int("attempts", 2))
+		retry.Text = MediaUnavailableReply
+		retry.Videos, retry.Audios = nil, nil
 	}
 	return retry, nil
 }
