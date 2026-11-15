@@ -221,6 +221,7 @@ Image, video and music generation report no token counts.
 | `GEMINI_TEMPORARY`        | ❌ No    | `false` | Enable stateless/incognito mode for all requests                 |
 | `GEMINI_SESSION_REUSE`    | ❌ No    | `false` | One Gemini chat per client conversation: follow-up requests send only their new messages into the same chat (OpenAI and Claude routes) |
 | `GEMINI_ROTATE_COOKIES`   | ❌ No    | `true`  | Let the server rotate `__Secure-1PSIDTS` itself. Set `false` when a browser keeps the session fresh and pushes cookies via `/admin/cookies` |
+| `GEMINI_USAGE_QUERY_ID`   | ❌ No    | built-in | Persisted GraphQL query ID behind `GET /usage` (usage limits from gemini.google.com/usage). Override only if Google rotates it |
 | `GEMINI_VIDEO_TIMEOUT_MINUTES` | ❌ No | `10` | Minutes a video job may take (maximum `60`); only one video job runs at a time |
 | `GEMINI_COOKIE_API_KEY`   | ❌ No    | —       | Bearer token that enables `POST /admin/cookies`, see below       |
 | `PORT`                    | ❌ No    | `4981`  | Server port                                                      |

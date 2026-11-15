@@ -42,6 +42,9 @@ func (h *Controller) Enabled() bool { return h.apiKey != "" }
 // not registered at all, so the server behaves exactly as before and callers
 // get the normal 404 handler.
 func (h *Controller) Register(app *fiber.App) {
+	// Read-only, and holds no secrets: the account's usage limits.
+	app.Get("/usage", h.HandleUsage)
+
 	if !h.Enabled() {
 		h.log.Info("Cookie update endpoint disabled; set GEMINI_COOKIE_API_KEY to enable /admin/cookies")
 		return
@@ -163,4 +166,16 @@ func formatTime(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// HandleUsage returns the account's Gemini Web usage limits (the numbers on
+// gemini.google.com/usage): the subscription tier and, per usage window, the
+// percentage used and when it resets. Cached for a minute.
+func (h *Controller) HandleUsage(c fiber.Ctx) error {
+	usage, err := h.client.GetUsage(c.Context())
+	if err != nil {
+		h.log.Warn("Reading Gemini usage failed", zap.Error(err))
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(usage)
 }

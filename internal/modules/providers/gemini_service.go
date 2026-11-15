@@ -58,6 +58,8 @@ type Client struct {
 	// rotationDisabled stops the server from rotating cookies itself
 	// (GEMINI_ROTATE_COOKIES=false); pushed cookies are used as they are.
 	rotationDisabled bool
+	// usage caches GetUsage for a minute.
+	usage *usageCache
 
 	// refreshSessionTokenFn is a test seam for Init; nil uses the real
 	// refreshSessionToken implementation.
@@ -152,6 +154,7 @@ func newClient(cfg *configs.Config, log *zap.Logger, validate func(ctx context.C
 		defaultTemporary:       cfg.Gemini.Temporary,
 		conversations:          newConversationStore(cfg.Gemini.SessionReuse),
 		rotationDisabled:       !cfg.Gemini.RotateCookies,
+		usage:                  newUsageCache(cfg.Gemini.UsageQueryID),
 		sessionValidator:       validate,
 		envCookieHash:          cookieHeaderHash(cfg.Gemini.Cookies),
 	}

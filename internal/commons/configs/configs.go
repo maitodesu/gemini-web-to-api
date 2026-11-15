@@ -41,6 +41,10 @@ type GeminiConfig struct {
 	// pushes cookies: two parties rotating one session looks like cookie theft
 	// to Google, which then signs the session out.
 	RotateCookies bool
+	// UsageQueryID overrides the persisted GraphQL query ID the bridge uses to
+	// read the account's usage limits for GET /usage (GEMINI_USAGE_QUERY_ID).
+	// Only needed if Google rotates it; empty uses the built-in ID.
+	UsageQueryID string
 	// CookieAPIKey enables the authenticated POST /admin/cookies endpoint used
 	// by browser extensions to push a fresh session. When empty the route is
 	// not registered at all.
@@ -121,6 +125,7 @@ func New() (*Config, error) {
 	cfg.Gemini.Temporary = getEnvBool("GEMINI_TEMPORARY", false)
 	cfg.Gemini.SessionReuse = getEnvBool("GEMINI_SESSION_REUSE", false)
 	cfg.Gemini.RotateCookies = getEnvBool("GEMINI_ROTATE_COOKIES", true)
+	cfg.Gemini.UsageQueryID = strings.TrimSpace(os.Getenv("GEMINI_USAGE_QUERY_ID"))
 	if cfg.Gemini.AuthUser != "" {
 		if n, err := strconv.Atoi(cfg.Gemini.AuthUser); err != nil || n < 0 {
 			return nil, fmt.Errorf("invalid GEMINI_AUTH_USER value: %q (must be a non-negative account slot)", cfg.Gemini.AuthUser)
