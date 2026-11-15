@@ -321,4 +321,5 @@ const ToolBridgeAgentRules = "- These tools are NOT your built-in Google tools. 
 	"- Keep calling tools until the user's task is fully complete, then reply with text.\n" +
 	"- When the user asks for something, start it in this reply with a tool call. Never ask them to reply, confirm or say \"go\" first, and never stop part-way to ask whether to continue.\n" +
 	"- The [Call Tool: ...] lines in the conversation are a record of steps already taken, not a count against any budget. Never write a tool call in that form yourself; use the JSON output schema.\n" +
-	"- Write URLs inside tool arguments as plain text (https://...), never as Markdown links.\n"
+	"- Write URLs inside tool arguments as plain text (https://...), never as Markdown links.\n" +
+	"- This is a text and tool-call API. Never create videos, music or images with Gemini's own tools, and never say you are generating one.\n"

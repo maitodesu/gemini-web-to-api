@@ -77,7 +77,7 @@ func (s *ClaudeService) generateMessage(ctx context.Context, req dto.MessageRequ
 	}
 	hasTools := len(req.Tools) > 0
 
-	opts := []providers.GenerateOption{}
+	opts := []providers.GenerateOption{providers.WithTextOnly()}
 	if req.Model != "" {
 		opts = append(opts, providers.WithModel(req.Model))
 	}

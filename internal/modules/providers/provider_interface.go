@@ -119,6 +119,9 @@ type GenerateConfig struct {
 	Music                   *MusicConfig
 	// Conversation continues an existing Gemini chat instead of starting one.
 	Conversation *SessionMetadata
+	// TextOnly rejects replies where Gemini starts its own video or music
+	// generation (see WithTextOnly).
+	TextOnly bool
 }
 
 // InputFile is an in-memory file to upload with a generation request.

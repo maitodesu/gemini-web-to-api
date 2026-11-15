@@ -142,7 +142,7 @@ func (s *OpenAIService) createChatCompletion(ctx context.Context, req dto.ChatCo
 		prompt = s.buildToolBridgePrompt(req, prompt)
 	}
 
-	opts := []providers.GenerateOption{providers.WithThinkingLevel(geminiThinkingLevel(req.ReasoningEffort))}
+	opts := []providers.GenerateOption{providers.WithThinkingLevel(geminiThinkingLevel(req.ReasoningEffort)), providers.WithTextOnly()}
 	if req.Model != "" {
 		opts = append(opts, providers.WithModel(req.Model))
 	}

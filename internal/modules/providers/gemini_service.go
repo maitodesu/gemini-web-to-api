@@ -593,7 +593,11 @@ func (c *Client) GetCookies() *CookieStore {
 }
 
 func (c *Client) GenerateContent(ctx context.Context, prompt string, options ...GenerateOption) (*Response, error) {
-	return c.generateContent(ctx, prompt, nil, options...)
+	resp, err := c.generateContent(ctx, prompt, nil, options...)
+	if err != nil {
+		return nil, err
+	}
+	return c.guardTextOnly(ctx, prompt, resp, options)
 }
 
 // ResolveModel validates a requested public model name and returns the
@@ -836,6 +840,14 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 
 		if parseErr != nil {
 			lastErr = parseErr
+			// Gemini answers a chat it will not continue with [13 1097] on
+			// every attempt; the caller restarts it from the full history, so
+			// retrying here only adds seconds.
+			if metadata != nil && isChatNotContinuableError(parseErr) {
+				c.log.Warn("Gemini will not continue this chat", zap.Error(parseErr))
+				maxAttempts = attempt
+				break
+			}
 			c.log.Warn("Failed to parse response, will retry",
 				zap.Error(parseErr),
 				zap.Int("attempt", attempt),
