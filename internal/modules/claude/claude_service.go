@@ -50,8 +50,28 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 		return nil, err
 	}
 
-	// Logic: Build Prompt
+	plan := s.client.PlanConversation("claude|"+req.Model+"|"+req.System.Text, req.Messages)
+	resp, err := s.generateMessage(ctx, req, plan)
+	if err != nil && plan.Continues() && ctx.Err() == nil {
+		// The Gemini chat may be gone; the full history still works.
+		s.log.Warn("Continuing the Gemini chat failed; starting a new one", zap.Error(err))
+		resp, err = s.generateMessage(ctx, req, plan.Fresh())
+	}
+	return resp, err
+}
+
+func (s *ClaudeService) generateMessage(ctx context.Context, req dto.MessageRequest, plan *providers.ConversationPlan) (*dto.MessageResponse, error) {
+	// Logic: Build Prompt. A continued Gemini chat already holds the earlier
+	// messages and the system prompt, so only the new messages are sent.
+	messages := req.Messages
 	prompt := s.buildPrompt(req)
+	if plan.Continues() {
+		messages = req.Messages[plan.NewFrom:]
+		prompt = common.BuildPromptFromMessages(messages, "")
+		if prompt != "" && len(req.Tools) > 0 {
+			prompt = s.buildToolBridgePrompt(req, prompt)
+		}
+	}
 	if prompt == "" {
 		return nil, fmt.Errorf("no valid content in messages")
 	}
@@ -61,7 +81,10 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 	if req.Model != "" {
 		opts = append(opts, providers.WithModel(req.Model))
 	}
-	inputFiles, err := providers.InputFilesFromAttachments(req.Messages)
+	if opt := plan.Option(); opt != nil {
+		opts = append(opts, opt)
+	}
+	inputFiles, err := providers.InputFilesFromAttachments(messages)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +130,7 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 		resContent = append(resContent, dto.ConfigContent{Type: "text", Text: response.Text})
 	}
 
+	plan.Save(response)
 	tokens := response.CountTokens(prompt)
 
 	return &dto.MessageResponse{

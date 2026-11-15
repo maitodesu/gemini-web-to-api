@@ -108,8 +108,24 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 		return nil, err
 	}
 
-	// Logic: Build Prompt
-	prompt := utils.BuildPromptFromMessages(modelMessages, "")
+	plan := s.client.PlanConversation("openai|"+req.Model, modelMessages)
+	resp, err := s.createChatCompletion(ctx, req, modelMessages, plan)
+	if err != nil && plan.Continues() && ctx.Err() == nil && !errors.Is(err, ErrInvalidToolCall) {
+		// The Gemini chat may be gone; the full history still works.
+		s.log.Warn("Continuing the Gemini chat failed; starting a new one", zap.Error(err))
+		resp, err = s.createChatCompletion(ctx, req, modelMessages, plan.Fresh())
+	}
+	return resp, err
+}
+
+func (s *OpenAIService) createChatCompletion(ctx context.Context, req dto.ChatCompletionRequest, modelMessages []models.Message, plan *providers.ConversationPlan) (*dto.ChatCompletionResponse, error) {
+	// Logic: Build Prompt. A continued Gemini chat already holds the earlier
+	// messages, so only the new ones are sent.
+	promptMessages := modelMessages
+	if plan.Continues() {
+		promptMessages = modelMessages[plan.NewFrom:]
+	}
+	prompt := utils.BuildPromptFromMessages(promptMessages, "")
 	if prompt == "" {
 		return nil, fmt.Errorf("no valid content in messages")
 	}
@@ -130,7 +146,10 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	if req.Model != "" {
 		opts = append(opts, providers.WithModel(req.Model))
 	}
-	inputFiles, err := providers.InputFilesFromAttachments(modelMessages)
+	if opt := plan.Option(); opt != nil {
+		opts = append(opts, opt)
+	}
+	inputFiles, err := providers.InputFilesFromAttachments(promptMessages)
 	if err != nil {
 		return nil, err
 	}
@@ -199,6 +218,7 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 		message.Content = withImageMarkdown(message.Content, response.Images)
 	}
 
+	plan.Save(response)
 	message.ReasoningContent = response.ReasoningText
 	message.Canvases = providers.CanvasFiles(response.Canvases)
 

@@ -117,6 +117,8 @@ type GenerateConfig struct {
 	Video                   *VideoConfig
 	Canvas                  bool
 	Music                   *MusicConfig
+	// Conversation continues an existing Gemini chat instead of starting one.
+	Conversation *SessionMetadata
 }
 
 // InputFile is an in-memory file to upload with a generation request.

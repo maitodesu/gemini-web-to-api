@@ -219,6 +219,7 @@ Image, video and music generation report no token counts.
 | `GEMINI_REFRESH_INTERVAL` | ❌ No    | `1440`  | Cookie rotation interval in minutes (minimum `10`), see below    |
 | `GEMINI_MAX_RETRIES`      | ❌ No    | `3`     | Max retry attempts when an API call fails                        |
 | `GEMINI_TEMPORARY`        | ❌ No    | `false` | Enable stateless/incognito mode for all requests                 |
+| `GEMINI_SESSION_REUSE`    | ❌ No    | `false` | One Gemini chat per client conversation: follow-up requests send only their new messages into the same chat (OpenAI and Claude routes) |
 | `GEMINI_VIDEO_TIMEOUT_MINUTES` | ❌ No | `10` | Minutes a video job may take (maximum `60`); only one video job runs at a time |
 | `GEMINI_COOKIE_API_KEY`   | ❌ No    | —       | Bearer token that enables `POST /admin/cookies`, see below       |
 | `PORT`                    | ❌ No    | `4981`  | Server port                                                      |

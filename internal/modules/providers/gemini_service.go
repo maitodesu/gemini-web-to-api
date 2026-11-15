@@ -53,6 +53,8 @@ type Client struct {
 	maxRetries       int
 	cachedModels     []geminiModel
 	defaultTemporary bool
+	// conversations maps client conversations to Gemini chats (nil when off).
+	conversations *ConversationStore
 
 	// refreshSessionTokenFn is a test seam for Init; nil uses the real
 	// refreshSessionToken implementation.
@@ -145,6 +147,7 @@ func newClient(cfg *configs.Config, log *zap.Logger, validate func(ctx context.C
 		maxRetries:             cfg.Gemini.MaxRetries,
 		log:                    log,
 		defaultTemporary:       cfg.Gemini.Temporary,
+		conversations:          newConversationStore(cfg.Gemini.SessionReuse),
 		sessionValidator:       validate,
 		envCookieHash:          cookieHeaderHash(cfg.Gemini.Cookies),
 	}
@@ -662,6 +665,9 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	requestID := strings.ToUpper(uuid.NewString())
 	inner := buildGenerateInner(prompt, uploadedFiles, selectedModel.ModelNumber, language, requestID, c.defaultTemporary)
 	inner[80] = thinkingLevel
+	if metadata == nil && config.Conversation != nil {
+		metadata = conversationMetadata(config.Conversation)
+	}
 	if metadata != nil {
 		inner[2] = metadata
 	}
@@ -1237,11 +1243,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 											rcid = id
 										}
 									}
-									if len(payload) > 1 {
-										if id, ok := payload[1].(string); ok {
-											cid = id
-										}
-									}
+									cid, rid = chatIDsFromPayload(payload)
 
 									finalResText = resText
 									finalMetadata = map[string]any{
