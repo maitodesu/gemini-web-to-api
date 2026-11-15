@@ -97,3 +97,18 @@ func TestRotationDisabled(t *testing.T) {
 		t.Fatalf("rotateCompat() = %v, want errRotationDisabled", err)
 	}
 }
+
+func TestJitteredInterval(t *testing.T) {
+	d := 24 * time.Hour
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 50; i++ {
+		j := jitteredInterval(d)
+		if j < 18*time.Hour || j > 30*time.Hour {
+			t.Fatalf("jitteredInterval = %v, want within ±25%% of %v", j, d)
+		}
+		seen[j] = true
+	}
+	if len(seen) < 2 {
+		t.Fatal("jitteredInterval should vary")
+	}
+}

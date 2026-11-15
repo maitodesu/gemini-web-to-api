@@ -448,12 +448,13 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 
 // startAutoRefresh periodically refreshes the PSIDTS cookie
 func (c *Client) startAutoRefresh() {
-	ticker := time.NewTicker(c.refreshInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(jitteredInterval(c.refreshInterval))
+	defer timer.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-timer.C:
+			timer.Reset(jitteredInterval(c.refreshInterval))
 			c.log.Debug("Starting scheduled cookie refresh")
 			// A cookie push must not land between the rotation and the
 			// session refresh, or the refresh would overwrite it.
@@ -1802,3 +1803,13 @@ func geminiSourcePath(authUser string) string {
 // errRotationDisabled is returned instead of rotating when
 // GEMINI_ROTATE_COOKIES=false.
 var errRotationDisabled = errors.New("cookie rotation disabled (GEMINI_ROTATE_COOKIES=false)")
+
+// jitteredInterval spreads scheduled refreshes over ±25% of d, so the
+// session checks Google sees do not arrive on an exact clock.
+func jitteredInterval(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	spread := int64(d / 2)
+	return d - d/4 + time.Duration(rand.Int63n(spread+1))
+}
