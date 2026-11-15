@@ -36,6 +36,11 @@ type GeminiConfig struct {
 	// SessionReuse keeps one Gemini Web chat per client conversation:
 	// follow-up requests send only their new messages into the same chat.
 	SessionReuse bool
+	// RotateCookies lets the server call accounts.google.com/RotateCookies
+	// itself. Turn it off when a browser keeps the same session fresh and
+	// pushes cookies: two parties rotating one session looks like cookie theft
+	// to Google, which then signs the session out.
+	RotateCookies bool
 	// CookieAPIKey enables the authenticated POST /admin/cookies endpoint used
 	// by browser extensions to push a fresh session. When empty the route is
 	// not registered at all.
@@ -115,6 +120,7 @@ func New() (*Config, error) {
 	cfg.Gemini.MaxRetries = getEnvInt("GEMINI_MAX_RETRIES", defaultGeminiMaxRetries)
 	cfg.Gemini.Temporary = getEnvBool("GEMINI_TEMPORARY", false)
 	cfg.Gemini.SessionReuse = getEnvBool("GEMINI_SESSION_REUSE", false)
+	cfg.Gemini.RotateCookies = getEnvBool("GEMINI_ROTATE_COOKIES", true)
 	if cfg.Gemini.AuthUser != "" {
 		if n, err := strconv.Atoi(cfg.Gemini.AuthUser); err != nil || n < 0 {
 			return nil, fmt.Errorf("invalid GEMINI_AUTH_USER value: %q (must be a non-negative account slot)", cfg.Gemini.AuthUser)

@@ -55,6 +55,9 @@ type Client struct {
 	defaultTemporary bool
 	// conversations maps client conversations to Gemini chats (nil when off).
 	conversations *ConversationStore
+	// rotationDisabled stops the server from rotating cookies itself
+	// (GEMINI_ROTATE_COOKIES=false); pushed cookies are used as they are.
+	rotationDisabled bool
 
 	// refreshSessionTokenFn is a test seam for Init; nil uses the real
 	// refreshSessionToken implementation.
@@ -148,6 +151,7 @@ func newClient(cfg *configs.Config, log *zap.Logger, validate func(ctx context.C
 		log:                    log,
 		defaultTemporary:       cfg.Gemini.Temporary,
 		conversations:          newConversationStore(cfg.Gemini.SessionReuse),
+		rotationDisabled:       !cfg.Gemini.RotateCookies,
 		sessionValidator:       validate,
 		envCookieHash:          cookieHeaderHash(cfg.Gemini.Cookies),
 	}
@@ -182,7 +186,7 @@ func (c *Client) Init(ctx context.Context) error {
 	}
 
 	// Obtain PSIDTS via rotation if missing
-	if c.cookies.Secure1PSID != "" && c.cookies.Secure1PSIDTS == "" {
+	if c.cookies.Secure1PSID != "" && c.cookies.Secure1PSIDTS == "" && !c.rotationDisabled {
 		c.log.Info("Only __Secure-1PSID provided, attempting to obtain __Secure-1PSIDTS via rotation...")
 		if err := c.RotateCookies(); err != nil {
 			c.log.Info("Rotation failed, proceeding with just __Secure-1PSID (might fail)", zap.String("error", err.Error()))
@@ -454,8 +458,13 @@ func (c *Client) startAutoRefresh() {
 			// A cookie push must not land between the rotation and the
 			// session refresh, or the refresh would overwrite it.
 			c.sessionMu.Lock()
+			rotate := c.RotateCookies
+			if c.rotationDisabled {
+				// Only check the session; the browser keeps the cookies fresh.
+				rotate = func() error { return errRotationDisabled }
+			}
 			rotateErr, sessionErr, healthy := refreshSessionHealth(
-				c.RotateCookies,
+				rotate,
 				func() error { return c.refreshSessionToken(context.Background()) },
 			)
 			c.mu.Lock()
@@ -463,7 +472,7 @@ func (c *Client) startAutoRefresh() {
 			c.mu.Unlock()
 			c.sessionMu.Unlock()
 
-			if rotateErr != nil {
+			if rotateErr != nil && !errors.Is(rotateErr, errRotationDisabled) {
 				c.log.Warn("Cookie rotation failed; verified the Gemini session separately", zap.Error(rotateErr))
 			}
 			if sessionErr != nil {
@@ -498,6 +507,9 @@ func refreshSessionHealth(rotate, refreshToken func() error) (rotateErr, session
 
 // rotateCompat runs cookie rotation, honoring the test seam when set.
 func (c *Client) rotateCompat() error {
+	if c.rotationDisabled {
+		return errRotationDisabled
+	}
 	if c.rotateFn != nil {
 		return c.rotateFn()
 	}
@@ -1786,3 +1798,7 @@ func geminiSourcePath(authUser string) string {
 	}
 	return "/u/" + authUser + "/app"
 }
+
+// errRotationDisabled is returned instead of rotating when
+// GEMINI_ROTATE_COOKIES=false.
+var errRotationDisabled = errors.New("cookie rotation disabled (GEMINI_ROTATE_COOKIES=false)")

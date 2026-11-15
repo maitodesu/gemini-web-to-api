@@ -90,3 +90,10 @@ func TestChatIDsFromPayload(t *testing.T) {
 		t.Fatalf("got %q %q", cid, rid)
 	}
 }
+
+func TestRotationDisabled(t *testing.T) {
+	c := &Client{rotationDisabled: true}
+	if err := c.rotateCompat(); err != errRotationDisabled {
+		t.Fatalf("rotateCompat() = %v, want errRotationDisabled", err)
+	}
+}
